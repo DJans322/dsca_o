@@ -5,7 +5,8 @@ import math
 from torch.nn import init
 from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.ops import boxes as box_ops
-
+from models import part_attention
+from torchvision.ops import box_iou
 class SpaceToDepth(nn.Module):
     """将空间信息转换为通道维度的下采样方法"""
     def __init__(self, block_size=2):
@@ -37,6 +38,17 @@ class SPDConv(nn.Module):
         return self.upsample(x)  # [N,1024,14,14]
 
 
+class IoUHead(nn.Module):
+    def __init__(self, in_dim):
+        super().__init__()
+        self.fc1 = nn.Linear(in_dim, in_dim // 2)
+        self.relu = nn.ReLU(inplace=True)
+        self.fc2 = nn.Linear(in_dim // 2, 1)
+    def forward(self, x):
+        x = x.mean([-2, -1])  # 全局平均池化
+        return torch.sigmoid(self.fc2(self.relu(self.fc1(x))))
+
+
 class SeqRoIHeadsDa(RoIHeads):
     def __init__(self, faster_rcnn_predictor, reid_head, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -45,8 +57,9 @@ class SeqRoIHeadsDa(RoIHeads):
         self.reid_head = reid_head
         # rename the method inherited from parent class
         self.postprocess_proposals = self.postprocess_detections
-
+        #self.part_attention = part_attention.DualAttentionBlock(1024)
         self.memory = None
+        self.iou_head = IoUHead(2048)
 
     def select_training_samples_gt(self, proposals, targets, is_source=True):
         self.check_targets(targets)
@@ -150,6 +163,7 @@ class SeqRoIHeadsDa(RoIHeads):
             ) = self.select_training_samples_da(proposals, targets)
 
         proposal_features = self.box_roi_pool(features, proposals, image_shapes)
+        #proposal_features = self.part_attention(proposal_features)
         proposal_features = self.box_head(proposal_features)
         proposal_cls_scores, proposal_regs = self.faster_rcnn_predictor(proposal_features["feat_res5"])
         boxes = self.get_boxes(proposal_regs, proposals, image_shapes)
@@ -158,6 +172,7 @@ class SeqRoIHeadsDa(RoIHeads):
             boxes, targets
         )
         box_features = self.box_roi_pool(features, boxes, image_shapes)
+        #box_features = self.part_attention(box_features)
         box_features = self.reid_head(box_features)
         box_embeddings, box_cls_scores = self.embedding_head(box_features)
 
@@ -175,8 +190,10 @@ class SeqRoIHeadsDa(RoIHeads):
             proposals, _, proposal_pid_labels, proposal_reg_targets = self.select_training_samples(proposals, targets)
 
         # ------------------- Faster R-CNN head ------------------ #
-        #proposals = [p.float() for p in proposals]####
+        #proposals = [p.half() for p in proposals]####
+
         proposal_features = self.box_roi_pool(features, proposals, image_shapes)
+        #proposal_features = self.part_attention(proposal_features)
         proposal_features = self.box_head(proposal_features)
         proposal_cls_scores, proposal_regs = self.faster_rcnn_predictor(proposal_features["feat_res5"])
 
@@ -215,14 +232,30 @@ class SeqRoIHeadsDa(RoIHeads):
             return [dict(boxes=boxes, labels=labels, scores=scores, embeddings=embeddings)], []
 
         # --------------------- Baseline head -------------------- #
+        #boxes = [p.half() for p in boxes]  ####
         box_features = self.box_roi_pool(features, boxes, image_shapes)
+        #box_features = self.part_attention(box_features)
         box_features = self.reid_head(box_features, is_source)
         box_regs = self.box_predictor(box_features["feat_res5"])
         box_embeddings, box_cls_scores = self.embedding_head(box_features)
+        iou_pred = self.iou_head(box_features["feat_res5"]).squeeze(1)
+        if self.training:
+
+            # 将 list[Tensor] 合并为一个 [N,4] 张量
+            pred_boxes = torch.cat(boxes, dim=0)
+            gt_boxes = torch.cat(matched_gt_boxes, dim=0)
+
+            # 1) 回归目标编码
+
+            # 真实 IoU 目标
+            iou_matrix = box_iou(pred_boxes, gt_boxes)  # [N, N]
+            # 若一一对应（matched_gt_boxes 与 boxes 对应索引一一匹配）：
+            iou_targets = torch.diagonal(iou_matrix)
         if box_cls_scores.dim() == 0:
             box_cls_scores = box_cls_scores.unsqueeze(0)
 
         result, losses = [], {}
+
         if self.training:
             proposal_labels = [y.clamp(0, 1) for y in proposal_pid_labels]
             box_labels = [y.clamp(0, 1) for y in box_pid_labels]
@@ -238,9 +271,14 @@ class SeqRoIHeadsDa(RoIHeads):
             )
             if is_source:
                 loss_box_reid_s = self.memory(box_embeddings, box_pid_labels, is_source=True)
+
+                loss_iou_s = F.smooth_l1_loss(iou_pred, iou_targets)*10
+                losses.update(loss_iou_s=loss_iou_s)
                 losses.update(loss_box_reid_s=loss_box_reid_s)
             else:
                 loss_box_reid_t = self.memory(box_embeddings, box_pid_labels)
+                loss_iou_t = F.smooth_l1_loss(iou_pred, iou_targets)
+                losses.update(loss_iou_t=loss_iou_t)
                 losses.update(loss_box_reid_t=loss_box_reid_t)
                 if not math.isfinite(loss_box_reid_t):
                     pass
@@ -249,7 +287,7 @@ class SeqRoIHeadsDa(RoIHeads):
             # so a higher NMS threshold is needed
             orig_thresh = self.nms_thresh
             self.nms_thresh = 0.5
-            boxes, scores, embeddings, labels = self.postprocess_boxes(
+            boxes, scores, embeddings, labels ,keep_= self.postprocess_boxes(
                 box_cls_scores,
                 box_regs,
                 box_embeddings,
@@ -263,7 +301,7 @@ class SeqRoIHeadsDa(RoIHeads):
             self.nms_thresh = orig_thresh
             num_images = len(boxes)
             for i in range(num_images):
-                result.append(dict(boxes=boxes[i], labels=labels[i], scores=scores[i], embeddings=embeddings[i]))
+                result.append(dict(boxes=boxes[i], labels=labels[i], scores=scores[i], embeddings=embeddings[i],iou_pred = iou_pred[keep_[i]]))
         return result, losses
 
     def get_boxes(self, box_regression, proposals, image_shapes):
@@ -321,6 +359,7 @@ class SeqRoIHeadsDa(RoIHeads):
         all_scores = []
         all_labels = []
         all_embeddings = []
+        img_keeps = []
         for boxes, scores, embeddings, image_shape in zip(pred_boxes, pred_scores, pred_embeddings, image_shapes):
             boxes = box_ops.clip_boxes_to_image(boxes, image_shape)
 
@@ -367,6 +406,7 @@ class SeqRoIHeadsDa(RoIHeads):
             keep = box_ops.batched_nms(boxes, scores, labels, self.nms_thresh)
             # keep only topk scoring predictions
             keep = keep[: self.detections_per_img]
+            img_keeps.append(keep)
             boxes, scores, labels, embeddings = (
                 boxes[keep],
                 scores[keep],
@@ -379,7 +419,7 @@ class SeqRoIHeadsDa(RoIHeads):
             all_labels.append(labels)
             all_embeddings.append(embeddings)
 
-        return all_boxes, all_scores, all_embeddings, all_labels
+        return all_boxes, all_scores, all_embeddings, all_labels,img_keeps
 
 
 class NormAwareEmbedding(nn.Module):
@@ -505,3 +545,4 @@ def detection_losses(
         loss_box_cls=loss_box_cls,
         loss_box_reg=loss_box_reg,
     )
+

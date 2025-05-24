@@ -276,6 +276,8 @@ def eval_search_cuhk(
             continue
         # only save top-10 predictions
         for k in range(10):
+            if len(imgs)==k:
+                break
             new_entry["gallery"].append(
                 {
                     "img": str(imgs[inds[k]]),

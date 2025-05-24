@@ -5,10 +5,10 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.nn import Module, Identity, Sequential, OrderedDict, Linear, Dropout, LayerNorm, BatchNorm1d, BatchNorm2d
+from torch.nn import Module, Identity, Sequential, Linear, Dropout, LayerNorm, BatchNorm1d, BatchNorm2d
 from typing import Optional, Dict, Union, Sequence
 from dataclasses import dataclass, field
-
+from collections import OrderedDict
 # --------------------------- 辅助组件（内联原代码库的子模块） --------------------------- #
 
 class LearnablePositionEmbedder2D(nn.Module):
@@ -93,7 +93,8 @@ class ParallelDecoder(nn.Module):
         dim_ffn: int = 2048, dropout: float = 0.0, dim_memory: Optional[int] = None
     ):
         super().__init__()
-        self.norm1 = BatchNorm1d(dim)
+        #self.norm1 = BatchNorm1d(dim)
+        self.norm1 = LayerNorm(dim)
         self.norm2 = LayerNorm(dim)
         self.norm3 = BatchNorm1d(dim)
         self.ffn1 = FeedForwardNetwork(dim, dim_ffn, dropout)
@@ -249,6 +250,7 @@ class ForegroundModulationNetwork(nn.Module):
         Returns:
             去噪后的特征向量 (B, embed_dim)
         """
+        x = F.normalize(x, p=2, dim=1)  # 新增L2归一化
         x = self.extractor(x)
         return self.denoiser(x)
 

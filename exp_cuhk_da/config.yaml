@@ -25,6 +25,20 @@ MODEL:
     DA_IMG_LOSS_WEIGHT: 1.0
     DA_INS_LOSS_WEIGHT: 1.0
     LW_DA_INS: 0.02
+  FMN:
+    DENOISER_TYPE: CrossAttention
+    EMBED_DIM: 1024
+    EXTRACTOR_TYPE: TripleConvHead
+    INPUT_CHANNELS: 1024
+    LAYER_NORM: true
+    PD_DIM_FFN: 2048
+    PD_DROPOUT: 0.0
+    PD_NUM_HEADS: 8
+    POOL_SIZE:
+    - 7
+    - 7
+    POOL_TYPE: Max
+    POS_EMB_TYPE: Learnable2D
   ROI_HEAD:
     BATCH_SIZE_TRAIN: 128
     BN_NECK: true

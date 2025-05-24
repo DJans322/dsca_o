@@ -92,6 +92,9 @@ def extract_dy_features(
                 boxes = detections[0]["boxes"].data.cpu()
                 embeddings = detections[0]["embeddings"].data.cpu()
                 scores = detections[0]["scores"].cpu()
+                iou_pred = detections[0]["iou_pred"].cpu()
+                m_min = cfg.MODEL.IOU_MOMENTUM.MIN
+                m_max = cfg.MODEL.IOU_MOMENTUM.MAX
                 if len(boxes) == 0:
                     # print("Here is an image without qualified proposal")
                     orig_thresh = model.roi_heads.score_thresh
@@ -127,6 +130,7 @@ def extract_dy_features(
                             ious[-1].append(iou)
                         if max(ious[-1]) > 0.7:
                             ious[-1] = ious[-1].index(max(ious[-1]))
+                            momentum = m_max - (m_max - m_min) * iou_pred[j]
                             memory_target_features[img_store_idx + ious[-1]] = (
                                 momentum * memory_target_features[img_store_idx + ious[-1]]
                                 + (1.0 - momentum) * embeddings[j]

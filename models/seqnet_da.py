@@ -12,7 +12,7 @@ from models.da_head import DomainAdaptationModule
 from models.box_head import BBoxRegressor
 from apex import amp
 
-
+from models.fmn_module import FMNConfig, ForegroundModulationNetwork
 
 
 
@@ -79,9 +79,10 @@ class SeqNetDa(nn.Module):
         self.rpn = rpn
         self.roi_heads = roi_heads
         # here modified, for adapting to amp
-        #self.roi_heads.box_roi_pool.forward = amp.half_function(self.roi_heads.box_roi_pool.forward)
+        self.roi_heads.box_roi_pool.forward = amp.half_function(self.roi_heads.box_roi_pool.forward)
         self.transform = transform
         self.da_heads = DomainAdaptationModule(cfg.MODEL.DA_HEADS)
+
 
         # loss weights
         self.lw_rpn_reg = cfg.SOLVER.LW_RPN_REG
@@ -93,27 +94,27 @@ class SeqNetDa(nn.Module):
         self.lw_box_reid = cfg.SOLVER.LW_BOX_REID
         self.lw_box_reid_t = cfg.SOLVER.LW_BOX_REID_T
 
-        self.max_epochs = cfg.SOLVER.MAX_EPOCHS
-         # 源域特征
-        #self.src_dy_fea = nn.Linear(2048, 256)
-        self.src_dy_fea = nn.Sequential(
-            nn.Linear(2048, 256),
-            nn.InstanceNorm1d(256),
-            nn.ReLU()
-        )
-        self.src_dy_out = nn.Linear(256, 1)
-
-        # 目标域特征
-        #self.tgt_dy_fea = nn.Linear(2048, 256)
-        self.tgt_dy_fea = nn.Sequential(
-            nn.Linear(2048, 256),
-            nn.InstanceNorm1d(256),
-            nn.ReLU()
-        )
-        self.tgt_dy_out = nn.Linear(256, 1)
-
-
-        self.sigmoid = nn.Sigmoid()
+        # self.max_epochs = cfg.SOLVER.MAX_EPOCHS
+        #  # 源域特征
+        # #self.src_dy_fea = nn.Linear(2048, 256)
+        # self.src_dy_fea = nn.Sequential(
+        #     nn.Linear(2048, 256),
+        #     nn.InstanceNorm1d(256),
+        #     nn.ReLU()
+        # )
+        # self.src_dy_out = nn.Linear(256, 1)
+        #
+        # # 目标域特征
+        # #self.tgt_dy_fea = nn.Linear(2048, 256)
+        # self.tgt_dy_fea = nn.Sequential(
+        #     nn.Linear(2048, 256),
+        #     nn.InstanceNorm1d(256),
+        #     nn.ReLU()
+        # )
+        # self.tgt_dy_out = nn.Linear(256, 1)
+        #
+        #
+        # self.sigmoid = nn.Sigmoid()
     # The is_source here should be switched when inferencing
     def inference(self, images, targets=None, query_img_as_gallery=False, is_source=False):
         original_image_sizes = [img.shape[-2:] for img in images]
@@ -166,32 +167,32 @@ class SeqNetDa(nn.Module):
         )
         
         #源域域分离-----
-        max_epochs = self.max_epochs
-        #源域域特征
-        dy_feas_s = da_ins_feas_s_before.view(da_ins_feas_s_before.size(0), -1)
-        dy_feas_s = self.src_dy_fea(dy_feas_s)#源域特征
-        #源域标签预测值
-        dy_lable_logits_s =self.src_dy_out(dy_feas_s) #源于标签预测值
-        dy_lable_logits_s = dy_lable_logits_s.float()
+        # max_epochs = self.max_epochs
+        # #源域域特征
+        # dy_feas_s = da_ins_feas_s_before.view(da_ins_feas_s_before.size(0), -1)
+        # dy_feas_s = self.src_dy_fea(dy_feas_s)#源域特征
+        # #源域标签预测值
+        # dy_lable_logits_s =self.src_dy_out(dy_feas_s) #源于标签预测值
+        # dy_lable_logits_s = dy_lable_logits_s.float()
 
         #正交损失，让域与实例分离        
         #orth_loss_s = torch.cosine_similarity(dy_feas_s, da_ins_feas_s).abs().mean()
-        dy_feas_s = F.normalize(dy_feas_s, p=2, dim=1)
-        person_feas_s = F.normalize(da_ins_feas_s, p=2, dim=1)
-        # 计算两个特征的点积
-        dot_product = torch.sum(dy_feas_s * person_feas_s, dim=1)
-        # 计算两个特征的范数
-        meta_norm = torch.norm(dy_feas_s, dim=1)+ 1e-8
-        view_norm = torch.norm(person_feas_s, dim=1)+ 1e-8
-        # 计算正交损失
-        orth_loss_s = torch.mean(torch.abs(dot_product) / (meta_norm * view_norm))
-        #域标签损失
-        dy_labels_s = torch.cat(da_ins_labels_s_before)#源域标签
-        dy_labels_s = dy_labels_s.unsqueeze(1).float()
-        #ce_loss_s = F.binary_cross_entropy_with_logits(dy_lable_s, da_labels_s)
-
-        alpha = 0.7 * (1 + torch.cos(torch.tensor(epoch, dtype=torch.float32) / max_epochs * torch.pi))  # 从0到0.7平滑增加
-        losses["loss_orthogonal_s"] = orth_loss_s * alpha
+        # dy_feas_s = F.normalize(dy_feas_s, p=2, dim=1)
+        # person_feas_s = F.normalize(da_ins_feas_s, p=2, dim=1)
+        # # 计算两个特征的点积
+        # dot_product = torch.sum(dy_feas_s * person_feas_s, dim=1)
+        # # 计算两个特征的范数
+        # meta_norm = torch.norm(dy_feas_s, dim=1)+ 1e-8
+        # view_norm = torch.norm(person_feas_s, dim=1)+ 1e-8
+        # # 计算正交损失
+        # orth_loss_s = torch.mean(torch.abs(dot_product) / (meta_norm * view_norm))
+        # #域标签损失
+        # dy_labels_s = torch.cat(da_ins_labels_s_before)#源域标签
+        # dy_labels_s = dy_labels_s.unsqueeze(1).float()
+        # #ce_loss_s = F.binary_cross_entropy_with_logits(dy_lable_s, da_labels_s)
+        #
+        # alpha = 0.7 * (1 + torch.cos(torch.tensor(epoch, dtype=torch.float32) / max_epochs * torch.pi))  # 从0到0.7平滑增加
+        # losses["loss_orthogonal_s"] = orth_loss_s * alpha
 
         #losses["loss_orthogonal_s"] = orth_loss_s  # 正交损失
         #losses["loss_cross_entropy_s"] = ce_loss_s*0.1  # 交叉熵损失
@@ -236,35 +237,35 @@ class SeqNetDa(nn.Module):
         #目标域域分离-----
 
         #目标域域特征
-        dy_feas_t = da_ins_feas_t_before.view(da_ins_feas_t_before.size(0), -1)
-        dy_feas_t = self.tgt_dy_fea(dy_feas_t)#目标域特征
-        #目标域标签预测值
-        dy_lable_logits_t = self.tgt_dy_out(dy_feas_t)
-        dy_lable_logits_t = dy_lable_logits_t.float()
-        #正交损失，让域与实例分离        
-        #orth_loss_t = torch.cosine_similarity(dy_feas_t, da_ins_feas_t).abs().mean()
-        dy_feas_t = F.normalize(dy_feas_t, p=2, dim=1)
-        person_feas_t = F.normalize(da_ins_feas_t, p=2, dim=1)
-
-        # 计算两个特征的点积
-        dot_product = torch.sum(dy_feas_t * person_feas_t, dim=1)
-        # 计算两个特征的范数
-        meta_norm = torch.norm(dy_feas_t, dim=1)+ 1e-8
-        view_norm = torch.norm(person_feas_t, dim=1)+ 1e-8
-        # 计算正交损失
-        orth_loss_t = torch.mean(torch.abs(dot_product) / (meta_norm * view_norm))
-        #域标签损失
-        dy_labels_t = torch.cat(da_ins_labels_t_before)
-        dy_labels_t = dy_labels_t.unsqueeze(1).float()
-
-        mix_label = torch.cat([dy_labels_s,dy_labels_t])
-        mix_label_logits = torch.cat([dy_lable_logits_s,dy_lable_logits_t])
-        ce_loss_dy = F.binary_cross_entropy_with_logits(mix_label_logits, mix_label)
-
-
-
-        losses["loss_orthogonal_t"] = orth_loss_t*alpha  # 正交损失
-        losses["loss_cross_entropy_dy"] = ce_loss_dy*alpha  # 交叉熵损失
+        # dy_feas_t = da_ins_feas_t_before.view(da_ins_feas_t_before.size(0), -1)
+        # dy_feas_t = self.tgt_dy_fea(dy_feas_t)#目标域特征
+        # #目标域标签预测值
+        # dy_lable_logits_t = self.tgt_dy_out(dy_feas_t)
+        # dy_lable_logits_t = dy_lable_logits_t.float()
+        # #正交损失，让域与实例分离
+        # #orth_loss_t = torch.cosine_similarity(dy_feas_t, da_ins_feas_t).abs().mean()
+        # dy_feas_t = F.normalize(dy_feas_t, p=2, dim=1)
+        # person_feas_t = F.normalize(da_ins_feas_t, p=2, dim=1)
+        #
+        # # 计算两个特征的点积
+        # dot_product = torch.sum(dy_feas_t * person_feas_t, dim=1)
+        # # 计算两个特征的范数
+        # meta_norm = torch.norm(dy_feas_t, dim=1)+ 1e-8
+        # view_norm = torch.norm(person_feas_t, dim=1)+ 1e-8
+        # # 计算正交损失
+        # orth_loss_t = torch.mean(torch.abs(dot_product) / (meta_norm * view_norm))
+        # #域标签损失
+        # dy_labels_t = torch.cat(da_ins_labels_t_before)
+        # dy_labels_t = dy_labels_t.unsqueeze(1).float()
+        #
+        # mix_label = torch.cat([dy_labels_s,dy_labels_t])
+        # mix_label_logits = torch.cat([dy_lable_logits_s,dy_lable_logits_t])
+        # ce_loss_dy = F.binary_cross_entropy_with_logits(mix_label_logits, mix_label)
+        #
+        #
+        #
+        # losses["loss_orthogonal_t"] = orth_loss_t*alpha  # 正交损失
+        # losses["loss_cross_entropy_dy"] = ce_loss_dy*alpha  # 交叉熵损失
         #--------
         da_ins_labels_t = torch.cat(da_ins_labels_t)
         da_ins_labels_t_before = torch.cat(da_ins_labels_t_before)
@@ -304,3 +305,26 @@ class SeqNetDa(nn.Module):
         losses["loss_box_reid_s"] *= self.lw_box_reid
 
         return losses
+
+#test
+from defaults import get_default_cfg
+from utils import set_random_seed
+cfg = get_default_cfg()
+set_random_seed(12)
+config_file = "/home/guojian/paper_project/dsca_o/configs/prw_da.yaml"
+cfg.merge_from_file(config_file)
+from collections import OrderedDict
+from spcl.models.dsbn import convert_dsbn
+tensor_data = torch.rand(2, 1024, 54, 94, dtype=torch.float32)
+
+# 创建OrderedDict并添加张量
+feature_test = OrderedDict([
+    ('feat_res4', tensor_data)
+])
+proposal_test = [torch.rand(300,4,dtype=torch.float32),torch.rand(300,4,dtype=torch.float32)]
+img_shape_test = [(843,1500),(843,1500)]
+m_test = SeqNetDa(cfg)
+convert_dsbn(m_test.roi_heads.reid_head)
+m_test.eval()
+t = m_test.roi_heads(feature_test,proposal_test,img_shape_test)
+print(t)

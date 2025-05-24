@@ -135,6 +135,27 @@ _C.MODEL.SPD.SPD_THRESH = 60 # 面积阈值（32x32像素）
 _C.MODEL.SPD.SPD_IN_CHANNELS = 1024  # 必须与box_roi_pool输出通道一致
 _C.MODEL.SPD.SPD_OUT_CHANNELS = 1024  # 必须与box_roi_pool输出通道一致
 # -------------------------------------------------------- #
+#                         FMN                              #
+# -------------------------------------------------------- #
+_C.MODEL.FMN = CN()
+_C.MODEL.FMN.INPUT_CHANNELS = 1024
+_C.MODEL.FMN.EMBED_DIM = 1024
+_C.MODEL.FMN.EXTRACTOR_TYPE = "TripleConvHead"
+_C.MODEL.FMN.DENOISER_TYPE = "CrossAttention"
+_C.MODEL.FMN.POOL_TYPE = "Max"
+_C.MODEL.FMN.POOL_SIZE = [7, 7]
+_C.MODEL.FMN.POS_EMB_TYPE = "Learnable2D"
+_C.MODEL.FMN.LAYER_NORM = True
+_C.MODEL.FMN.PD_NUM_HEADS = 8
+_C.MODEL.FMN.PD_DIM_FFN = 2048
+_C.MODEL.FMN.PD_DROPOUT = 0.0
+# -------------------------------------------------------- #
+#                        IOU Momentum                      #
+# -------------------------------------------------------- #
+_C.MODEL.IOU_MOMENTUM = CN()
+_C.MODEL.IOU_MOMENTUM.MIN=0.1     # IoU=0 时最保守
+_C.MODEL.IOU_MOMENTUM.MAX=0.9     # IoU=1 时最积极
+# -------------------------------------------------------- #
 #                        Evaluation                        #
 # -------------------------------------------------------- #
 # The period to evaluate the model during training
@@ -156,7 +177,7 @@ _C.DISP_PERIOD = 10
 # Whether to use tensorboard for visualization
 _C.TF_BOARD = True
 # The device loading the model
-_C.DEVICE = "cuda:0"
+_C.DEVICE = "cuda:1"
 # Set seed to negative to fully randomize everything
 _C.SEED = 1
 # Directory where output files are written

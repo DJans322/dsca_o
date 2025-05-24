@@ -8,8 +8,50 @@ import torch
 import math
 from torch import nn
 from torch.nn.modules.utils import _pair
+from triton.language import tensor
+
 from spcl.models.dsbn import DSBN2d, DSBN1d
 from utils import add_module_after_block
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+class MultiScaleAttention(nn.Module):
+    def __init__(self, in_channels, reduction=16):
+        super().__init__()
+        # 三个不同输出尺寸的自适应平均池化
+        self.pool1 = nn.AdaptiveAvgPool2d(1)
+        self.pool2 = nn.AdaptiveAvgPool2d(2)
+        self.pool4 = nn.AdaptiveAvgPool2d(4)
+
+        # 通道融合卷积：3c → c//reduction → c → sigmoid
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels * 3, in_channels // reduction, kernel_size=1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(in_channels // reduction, in_channels, kernel_size=1, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        b, c, _, _ = x.size()
+        # 1x1 尺度
+        p1 = self.pool1(x)                     # (b, c, 1, 1)
+        # 2x2 尺度，降为 (1,1)
+        p2 = self.pool2(x)                     # (b, c, 2, 2)
+        p2 = p2.mean(dim=(2, 3), keepdim=True) # (b, c, 1, 1) :contentReference[oaicite:1]{index=1}
+        # 4x4 尺度，降为 (1,1)
+        p4 = self.pool4(x)                     # (b, c, 4, 4)
+        p4 = p4.mean(dim=(2, 3), keepdim=True) # (b, c, 1, 1)
+
+        # 在通道维度拼接，得到 (b, 3c, 1, 1)
+        pooled = torch.cat([p1, p2, p4], dim=1)  # :contentReference[oaicite:2]{index=2}
+
+        # 生成通道注意力，并与原特征相乘
+        attention = self.conv(pooled)           # (b, c, 1, 1)
+        return x * attention
 
 
 class Backbone(nn.Module):
@@ -57,9 +99,10 @@ class Res5Head(nn.Module):
         if use_filter:
             self.layer4 = add_module_after_block(self.layer4, 1, AdaptiveFilter(2048, gap_size=(1, 1)))
         self.out_channels = [1024, 2048]
-
+        self.attention = MultiScaleAttention(2048)
     def forward(self, x):
         feat = self.layer4(x)
+        feat = self.attention(feat)
         x = F.adaptive_max_pool2d(x, 1)
         feat = F.adaptive_max_pool2d(feat, 1)
         return OrderedDict([["feat_res4", x], ["feat_res5", feat]])
@@ -72,7 +115,7 @@ class ReidRes5Head(nn.Module):
         if use_filter:
             self.layer4 = add_module_after_block(self.layer4, 1, AdaptiveFilter(2048, gap_size=(1, 1)))
         self.out_channels = [1024, 2048]
-
+        self.attention = MultiScaleAttention(2048)
     def bottleneck_forward(self, bottleneck, x, is_source):
         identity = x
 
@@ -112,7 +155,7 @@ class ReidRes5Head(nn.Module):
                 feat = module(feat, is_source)
             else:
                 feat = self.bottleneck_forward(module, feat, is_source)
-
+        feat = self.attention(feat)
         x = F.adaptive_max_pool2d(x, 1)
         feat = F.adaptive_max_pool2d(feat, 1)
         return OrderedDict([["feat_res4", x], ["feat_res5", feat]])
@@ -189,7 +232,7 @@ def build_resnet(name="resnet50", pretrained=True):
     resnet.bn1.bias.requires_grad_(False)
 
     return (
-        Backbone(resnet, use_filter=True),
+        Backbone(resnet, use_filter=False),#
         Res5Head(resnet.layer4, use_filter=False),
         ReidRes5Head(resnet.layer4, use_filter=False),
     )

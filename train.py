@@ -160,7 +160,7 @@ def main(args):
     model.roi_heads.memory = memory
     model, optimizer = amp.initialize(model, optimizer, opt_level="O1")
     lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=cfg.SOLVER.LR_DECAY_MILESTONES, gamma=0.1)
-
+    #model = model.half()
     start_epoch = 0
     if args.resume:
         assert args.ckpt, "--ckpt must be specified when --resume enabled"
