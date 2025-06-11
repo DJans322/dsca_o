@@ -1,9 +1,9 @@
-OUTPUT_DIR: ""
+OUTPUT_DIR: "./exp_prw_da"
 INPUT:
   TDATASET: "CUHK-SYSU"
   DATASET: "PRW"
-  TDATA_ROOT: ""
-  DATA_ROOT: ""
+  TDATA_ROOT: "/home/guojian/paper_project/CUHK-SYSU"
+  DATA_ROOT: "/home/guojian/paper_project/PRW-v16.04.20"
   BATCH_SIZE_TRAIN: 4
 SOLVER:
   MAX_EPOCHS: 14
@@ -16,7 +16,7 @@ MODEL:
     DA_CST_LOSS_WEIGHT: 0.1
   UPDATE_FACTOR:
     ONLINE: 0.2
-    OFFLINE: 0.2
+    OFFLINE: 0.6
 EVAL_PERIOD: 1
 TARGET_REID_START: 3
 EPS_P: 0.95

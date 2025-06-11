@@ -5,7 +5,7 @@ import math
 from torch.nn import init
 from torchvision.models.detection.roi_heads import RoIHeads
 from torchvision.ops import boxes as box_ops
-
+import os
 class SpaceToDepth(nn.Module):
     """将空间信息转换为通道维度的下采样方法"""
     def __init__(self, block_size=2):
@@ -47,7 +47,31 @@ class SeqRoIHeadsDa(RoIHeads):
         self.postprocess_proposals = self.postprocess_detections
 
         self.memory = None
-
+        self.embed_r4 = NormAwareEmbedding(
+            featmap_names=["feat_res4"],
+            in_channels=[1024],
+            dim=128,
+        )
+        # 单分支 Res5
+        self.embed_r5 = NormAwareEmbedding(
+            featmap_names=["feat_res5"],
+            in_channels=[2048],
+            dim=128,
+        )
+        # 复用权重
+        self.embed_r4.projectors["feat_res4"].load_state_dict(
+            self.embedding_head.projectors["feat_res4"].state_dict()
+        )
+        self.embed_r4.rescaler.load_state_dict(
+            self.embedding_head.rescaler.state_dict()
+        )
+        self.embed_r5.projectors["feat_res5"].load_state_dict(
+            self.embedding_head.projectors["feat_res5"].state_dict()
+        )
+        self.embed_r5.rescaler.load_state_dict(
+            self.embedding_head.rescaler.state_dict()
+        )
+        self.kl_r4_r5 = None
     def select_training_samples_gt(self, proposals, targets, is_source=True):
         self.check_targets(targets)
         assert targets is not None
@@ -204,6 +228,36 @@ class SeqRoIHeadsDa(RoIHeads):
             gt_box_features = self.reid_head(gt_box_features, is_source)
             embeddings, _ = self.embedding_head(gt_box_features)
             gt_det = {"boxes": targets[0]["boxes"], "embeddings": embeddings}
+
+            emb_r4, _ = self.embed_r4({"feat_res4": gt_box_features["feat_res4"]})  # [N,128]
+            emb_r5, _ = self.embed_r5({"feat_res5": gt_box_features["feat_res5"]})  # [N,128]
+            import pandas as pd
+            rows = []
+
+            # 假设 emb_dual, emb_r4, emb_r5 都是 [N, 256] 张量
+            p4 = F.softmax(emb_r4, dim=1)
+            p5 = F.softmax(emb_r5, dim=1)
+
+            # 可以比较 r4 vs r5，也可以比较 dual vs r4/r5
+            kl_r4_r5 = F.kl_div(p4.log(), p5, reduction="none").sum(dim=1)  # [N]
+            self.kl_r4_r5 = kl_r4_r5
+            # cos_r4_r5 = F.cosine_similarity(emb_r4, emb_r5, dim=1)  # [N]
+            #
+            # for i in range(embeddings.size(0)):
+            #     rows.append({
+            #         "box_idx": i,
+            #         "kl_r4_r5": kl_r4_r5[i].item(),
+            #         "cos_r4_r5": cos_r4_r5[i].item(),
+            #     })
+            #
+            # df = pd.DataFrame(rows)
+            # csv_path = "uncertainty_res4_vs_res5.csv"
+            # # 第一次写入时，写入表头；之后一直追加
+            # if not os.path.exists(csv_path):
+            #     df.to_csv(csv_path, index=False, mode="w")
+            # else:
+            #     df.to_csv(csv_path, index=False, header=False, mode="a")
+            # #print("Saved Res4-vs-Res5 uncertainty to uncertainty_res4_vs_res5.csv")
 
         # no detection predicted by Faster R-CNN head in test phase
         if boxes[0].shape[0] == 0:
@@ -417,7 +471,10 @@ class NormAwareEmbedding(nn.Module):
         """
         assert len(featmaps) == len(self.featmap_names)
         if len(featmaps) == 1:
-            k, v = featmaps.items()[0]
+            # k, v = featmaps.items()[0]
+            (k, v), = featmaps.items()
+            # k = "feat_res4"
+            # v = featmaps[0]
             v = self._flatten_fc_input(v)
             embeddings = self.projectors[k](v)
             norms = embeddings.norm(2, 1, keepdim=True)

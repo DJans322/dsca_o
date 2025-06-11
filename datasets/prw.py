@@ -9,7 +9,7 @@ from .base import BaseDataset
 
 
 class PRW(BaseDataset):
-    def __init__(self, root, split, is_source=False, build_tiny=True):
+    def __init__(self, root, split, is_source=False, build_tiny=False):
         self.name = "PRW"
         self.img_prefix = osp.join(root, "frames")
         super().__init__(root, split, is_source=is_source, build_tiny=build_tiny)

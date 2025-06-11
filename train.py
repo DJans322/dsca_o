@@ -3,14 +3,24 @@ import argparse
 import datetime
 import os.path as osp
 import time
+
+import cv2
+import numpy as np
 import torch
-import torch.utils.data
 import torch.nn.functional as F
+import torch.utils.data
+from apex import amp
+from sklearn.cluster import DBSCAN
+from torchvision import transforms
+
 from datasets import PersonSearchUDADataMoudle
 from defaults import get_default_cfg
 from engine import evaluate_performance, train_one_epoch_da
-from models.seqnet_da import SeqNetDa
 from models.cpm import ClusterProxyMemory
+from models.seqnet_da import SeqNetDa
+from spcl.evaluators import extract_dy_features
+from spcl.models.dsbn import convert_dsbn
+from spcl.utils.faiss_rerank import compute_jaccard_distance
 from utils import (
     mkdir,
     resume_from_ckpt,
@@ -20,25 +30,9 @@ from utils import (
     generate_cluster_features,
     generate_class_features,
 )
-from apex import amp
-from spcl.models.dsbn import convert_dsbn
-from spcl.utils.faiss_rerank import compute_jaccard_distance
-from spcl.evaluators import extract_dy_features
-from sklearn.cluster import DBSCAN
+
 
 # from models.seqnet import SeqNet
-
-import os
-import cv2
-import numpy as np
-import torch
-from torchvision import transforms
-
-import cv2
-import numpy as np
-import torch
-from torchvision import transforms
-import os
 
 def visualize_target_loader(train_loader_t, epoch, output_dir):
     """

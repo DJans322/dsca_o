@@ -88,6 +88,10 @@ def extract_dy_features(
 
             else:
                 detections = model(images, is_source=is_source)
+                if model.roi_heads.kl_r4_r5:
+                    u = torch.sigmoid(300 * (model.roi_heads.kl_r4_r5 - 0.008))  # ∈[0,1]
+                    m_min, m_max = 0.1, 0.9
+                    momentum = m_min + (m_max - m_min) * u  # 每样本不一样的 momentum
 
                 boxes = detections[0]["boxes"].data.cpu()
                 embeddings = detections[0]["embeddings"].data.cpu()
